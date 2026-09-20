@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "email": {
+      "command": ".venv/bin/email-mcp-server",
+      "args": []
+    }
+  }
+}

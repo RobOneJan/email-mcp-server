@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "email-mcp-server"
+version = "0.1.0"
+description = "Provider-agnostic Email MCP Server (Gmail first, Microsoft Graph next) exposing standardized email capabilities as MCP tools."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Robert Meier", email = "robertm93040@gmail.com" }]
+dependencies = [
+    "mcp>=2.0,<3",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "email-validator>=2.1",
+    "google-api-python-client>=2.120.0",
+    "google-auth>=2.28.0",
+    "google-auth-oauthlib>=1.2.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.9",
+]
+
+[project.scripts]
+email-mcp-server = "email_mcp.mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/email_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: requires live provider credentials, skipped by default",
+]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+disallow_untyped_defs = true

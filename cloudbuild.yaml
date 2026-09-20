@@ -1,0 +1,58 @@
+# Cloud Build CI/CD: build the image, push it to Artifact Registry, deploy to
+# Cloud Run. Trigger this on push to main (see README for the one-time setup
+# commands - creating the Artifact Registry repo, the Cloud Run service's
+# secrets, and the trigger itself are deliberately not automated here).
+substitutions:
+  _REGION: europe-west3
+  _REPO: email-mcp-server
+  _SERVICE: email-mcp-server
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$BUILD_ID
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$BUILD_ID
+      - --region=${_REGION}
+      - --platform=managed
+      # Not publicly reachable: this server can create drafts and (with a
+      # human-approved approval_id) send email on the configured Gmail
+      # account, so it stays behind IAM auth rather than --allow-unauthenticated.
+      - --no-allow-unauthenticated
+      - --max-instances=1
+      - --service-account=email-mcp-server-run@$PROJECT_ID.iam.gserviceaccount.com
+      # GCS-backed volume for ./var - stopgap persistence for the OAuth token
+      # and pending approvals across restarts/redeploys. Single-instance only
+      # (--max-instances=1 above); swap for Secret Manager + Firestore before
+      # this serves more than one Cloud Run instance or one customer.
+      - --add-volume=name=var,type=cloud-storage,bucket=$PROJECT_ID-email-mcp-server-var
+      - --add-volume-mount=volume=var,mount-path=/app/var
+      - --set-env-vars=EMAIL_PROVIDER=gmail,OAUTH_TOKEN_STORAGE=/app/var/gmail_token.json,APPROVAL_STORE_PATH=/app/var/approvals.json,AUDIT_LOG_PATH=/app/var/audit.log
+      - --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$BUILD_ID
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
