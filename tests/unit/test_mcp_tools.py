@@ -10,24 +10,27 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from email_mcp.application.approval_service import ApprovalService
-from email_mcp.application.email_service import EmailService
+from email_mcp.application.tenant_registry import TenantRegistry
+from email_mcp.domain.enums import EmailProviderName
 from email_mcp.infrastructure.approval_store_file import FileApprovalStore
 from email_mcp.infrastructure.audit import AuditLogger
+from email_mcp.infrastructure.config import Settings
 from email_mcp.infrastructure.security import MAX_SEARCH_LIMIT
+from email_mcp.infrastructure.token_store_file import FileTokenStore
 from email_mcp.mcp.tools import register_tools
-from email_mcp.providers.fake.provider import FakeEmailProvider
 
 
 @pytest.fixture
 def app(tmp_path) -> MCPServer:
-    provider = FakeEmailProvider()
+    settings = Settings(email_provider=EmailProviderName.FAKE)
     approvals = ApprovalService(
         FileApprovalStore(tmp_path / "approvals.json"), ttl=timedelta(minutes=30)
     )
     audit = AuditLogger(tmp_path / "audit.log")
-    service = EmailService(provider, approvals, audit, provider_name="fake")
+    token_store = FileTokenStore(tmp_path / "tokens")
+    registry = TenantRegistry(settings, approvals, audit, token_store)
     server = MCPServer("test-email-mcp-server")
-    register_tools(server, service)
+    register_tools(server, registry)
     return server
 
 

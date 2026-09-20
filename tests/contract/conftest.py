@@ -19,11 +19,14 @@ from email_mcp.providers.fake.provider import FakeEmailProvider
 
 
 def _gmail_contract_provider() -> EmailProvider:
+    from email_mcp.domain.identity import DEFAULT_TENANT_ID
     from email_mcp.infrastructure.config import get_settings
+    from email_mcp.infrastructure.token_store_file import FileTokenStore
     from email_mcp.providers.factory import get_email_provider
 
     settings = get_settings()
-    return get_email_provider(settings)
+    token_store = FileTokenStore(settings.oauth_token_storage)
+    return get_email_provider(settings, DEFAULT_TENANT_ID, token_store)
 
 
 def _gmail_available() -> bool:

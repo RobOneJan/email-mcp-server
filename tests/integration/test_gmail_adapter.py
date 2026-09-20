@@ -36,9 +36,12 @@ def _live_gmail_configured() -> bool:
 
 @pytest.mark.skipif(not _live_gmail_configured(), reason=_SKIP_REASON)
 async def test_search_emails_against_real_mailbox() -> None:
+    from email_mcp.domain.identity import DEFAULT_TENANT_ID
     from email_mcp.infrastructure.config import get_settings
+    from email_mcp.infrastructure.token_store_file import FileTokenStore
     from email_mcp.providers.factory import get_email_provider
 
-    provider = get_email_provider(get_settings())
+    settings = get_settings()
+    provider = get_email_provider(settings, DEFAULT_TENANT_ID, FileTokenStore(settings.oauth_token_storage))
     results = await provider.search_emails(limit=5)
     assert isinstance(results, list)

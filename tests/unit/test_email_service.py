@@ -15,6 +15,8 @@ from email_mcp.infrastructure.approval_store_file import FileApprovalStore
 from email_mcp.infrastructure.audit import AuditLogger
 from email_mcp.providers.fake.provider import FakeEmailProvider
 
+TENANT = "tenant-a"
+
 
 @pytest.fixture
 def email_service(tmp_path) -> EmailService:
@@ -23,7 +25,7 @@ def email_service(tmp_path) -> EmailService:
         FileApprovalStore(tmp_path / "approvals.json"), ttl=timedelta(minutes=30)
     )
     audit = AuditLogger(tmp_path / "audit.log")
-    return EmailService(provider, approvals, audit, provider_name="fake")
+    return EmailService(provider, approvals, audit, provider_name="fake", tenant_id=TENANT)
 
 
 async def test_search_then_get_email(email_service: EmailService) -> None:
@@ -62,7 +64,7 @@ async def test_full_approval_flow_sends_and_audits(email_service: EmailService, 
     approval = await email_service.request_send_approval(draft.id)
 
     # Simulate the human deciding out-of-band (never through EmailService/MCP).
-    email_service._approvals.decide(approval.id, approve=True)
+    email_service._approvals.decide(approval.id, TENANT, approve=True)
 
     sent_id = await email_service.send_email(draft_id=draft.id, approval_id=approval.id)
     assert sent_id

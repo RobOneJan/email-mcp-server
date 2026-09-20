@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import MCPServer
 
-from email_mcp.application.email_service import EmailService
+from email_mcp.application.tenant_registry import TenantRegistry
 
 
-def register_resources(app: MCPServer, service: EmailService) -> None:
+def register_resources(app: MCPServer, registry: TenantRegistry) -> None:
     """No-op for now; kept as the wiring point described above."""
     return

@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8765/oauth2/callback"
-    oauth_token_storage: str = "./var/gmail_token.json"
+    # A directory, not a file: one token per tenant is stored at
+    # <oauth_token_storage>/<tenant_id>.json (see infrastructure/token_store_file.py).
+    oauth_token_storage: str = "./var/tokens"
 
     # Approval store
     approval_store_path: str = "./var/approvals.json"

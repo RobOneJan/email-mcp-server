@@ -20,10 +20,10 @@ class _InMemoryTokenStore:
     def __init__(self, token: dict[str, Any] | None = None) -> None:
         self._token = token
 
-    def load(self) -> dict[str, Any] | None:
+    def load(self, tenant_id: str) -> dict[str, Any] | None:
         return self._token
 
-    def save(self, token: dict[str, Any]) -> None:
+    def save(self, tenant_id: str, token: dict[str, Any]) -> None:
         self._token = token
 
 
@@ -33,6 +33,7 @@ def _auth(token_store: _InMemoryTokenStore) -> GmailAuth:
         client_secret="client-secret",
         redirect_uri="http://localhost:8765/oauth2/callback",
         token_store=token_store,
+        tenant_id="tenant-a",
     )
 
 

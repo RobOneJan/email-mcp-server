@@ -113,6 +113,7 @@ class ApprovalRequest(DomainModel):
     """
 
     id: str
+    tenant_id: str
     action: str
     resource_id: str
     status: ApprovalStatus = ApprovalStatus.PENDING

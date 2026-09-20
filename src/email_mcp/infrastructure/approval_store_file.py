@@ -32,27 +32,32 @@ class FileApprovalStore:
             data[request.id] = json.loads(request.model_dump_json())
             self._write(fh, data)
 
-    def get(self, approval_id: str) -> ApprovalRequest | None:
+    def get(self, approval_id: str, tenant_id: str) -> ApprovalRequest | None:
         with self._locked_file("r") as (_fh, data):
             raw = data.get(approval_id)
-            return ApprovalRequest.model_validate(raw) if raw else None
+            if not raw or raw.get("tenant_id") != tenant_id:
+                return None
+            return ApprovalRequest.model_validate(raw)
 
-    def update_status(self, approval_id: str, status: ApprovalStatus) -> ApprovalRequest:
+    def update_status(
+        self, approval_id: str, tenant_id: str, status: ApprovalStatus
+    ) -> ApprovalRequest:
         with self._locked_file("r+") as (fh, data):
             raw = data.get(approval_id)
-            if raw is None:
+            if not raw or raw.get("tenant_id") != tenant_id:
                 raise ApprovalNotFoundError(approval_id)
             updated = ApprovalRequest.model_validate(raw).model_copy(update={"status": status})
             data[approval_id] = json.loads(updated.model_dump_json())
             self._write(fh, data)
             return updated
 
-    def list_pending(self) -> list[ApprovalRequest]:
+    def list_pending(self, tenant_id: str) -> list[ApprovalRequest]:
         with self._locked_file("r") as (_fh, data):
             return [
                 ApprovalRequest.model_validate(raw)
                 for raw in data.values()
                 if raw.get("status") == ApprovalStatus.PENDING.value
+                and raw.get("tenant_id") == tenant_id
             ]
 
     def _locked_file(self, mode: str):

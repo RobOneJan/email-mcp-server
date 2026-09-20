@@ -22,21 +22,26 @@ from email_mcp.infrastructure.audit import AuditEntry, AuditLogger
 from email_mcp.ports.email_provider import EmailProvider
 
 SEND_EMAIL_ACTION = "send_email"
-DEFAULT_ACTOR = "mcp-agent"  # stdio MCP is single-user in the MVP; see README limitations.
 
 
 class EmailService:
+    """Bound to exactly one tenant: `provider` must already be that tenant's
+    own authenticated provider instance (see `application/tenant_registry.py`),
+    since a Gmail/Graph provider carries one mailbox's credentials."""
+
     def __init__(
         self,
         provider: EmailProvider,
         approval_service: ApprovalService,
         audit_logger: AuditLogger,
         provider_name: str,
+        tenant_id: str,
     ) -> None:
         self._provider = provider
         self._approvals = approval_service
         self._audit = audit_logger
         self._provider_name = provider_name
+        self._tenant_id = tenant_id
 
     async def search_emails(self, query: str | None, limit: int) -> list[EmailMetadata]:
         return await self._provider.search_emails(query=query, limit=limit)
@@ -70,18 +75,18 @@ class EmailService:
             "body_preview": draft.body_text[:500],
         }
         request = self._approvals.request_approval(
-            action=SEND_EMAIL_ACTION, resource_id=draft_id, payload=preview
+            tenant_id=self._tenant_id, action=SEND_EMAIL_ACTION, resource_id=draft_id, payload=preview
         )
         self._record(action="request_send_approval", resource_id=draft_id, result="ok")
         return request
 
     async def get_approval_status(self, approval_id: str) -> ApprovalRequest:
-        return self._approvals.get_status(approval_id)
+        return self._approvals.get_status(approval_id, tenant_id=self._tenant_id)
 
     async def send_email(self, draft_id: str, approval_id: str) -> str:
         try:
             self._approvals.consume_if_approved(
-                approval_id, action=SEND_EMAIL_ACTION, resource_id=draft_id
+                approval_id, tenant_id=self._tenant_id, action=SEND_EMAIL_ACTION, resource_id=draft_id
             )
         except Exception as exc:
             self._record(
@@ -112,7 +117,7 @@ class EmailService:
     ) -> None:
         self._audit.record(
             AuditEntry(
-                actor=DEFAULT_ACTOR,
+                actor=self._tenant_id,
                 tool=action,
                 provider=self._provider_name,
                 action=action,

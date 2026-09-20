@@ -30,6 +30,7 @@ class ApprovalService:
 
     def request_approval(
         self,
+        tenant_id: str,
         action: str,
         resource_id: str,
         payload: dict[str, str],
@@ -37,6 +38,7 @@ class ApprovalService:
         now = datetime.now(UTC)
         request = ApprovalRequest(
             id=str(uuid.uuid4()),
+            tenant_id=tenant_id,
             action=action,
             resource_id=resource_id,
             status=ApprovalStatus.PENDING,
@@ -47,23 +49,25 @@ class ApprovalService:
         self._store.save(request)
         return request
 
-    def get_status(self, approval_id: str) -> ApprovalRequest:
-        request = self._store.get(approval_id)
+    def get_status(self, approval_id: str, tenant_id: str) -> ApprovalRequest:
+        request = self._store.get(approval_id, tenant_id)
         if request is None:
             raise ApprovalNotFoundError(approval_id)
         return self._resolve_expiry(request)
 
-    def decide(self, approval_id: str, approve: bool) -> ApprovalRequest:
+    def decide(self, approval_id: str, tenant_id: str, approve: bool) -> ApprovalRequest:
         """Called only by the human-run CLI, never by an MCP tool."""
-        request = self.get_status(approval_id)
+        request = self.get_status(approval_id, tenant_id)
         if request.status != ApprovalStatus.PENDING:
             raise ApprovalMismatchError(
                 f"approval {approval_id} is {request.status}, not pending"
             )
         new_status = ApprovalStatus.APPROVED if approve else ApprovalStatus.REJECTED
-        return self._store.update_status(approval_id, new_status)
+        return self._store.update_status(approval_id, tenant_id, new_status)
 
-    def consume_if_approved(self, approval_id: str, action: str, resource_id: str) -> None:
+    def consume_if_approved(
+        self, approval_id: str, tenant_id: str, action: str, resource_id: str
+    ) -> None:
         """Verify `approval_id` grants `action` on `resource_id`, then consume it.
 
         Raises ApprovalNotFoundError / ApprovalMismatchError / ApprovalExpiredError /
@@ -71,7 +75,7 @@ class ApprovalService:
         normally (and only then, atomically marks the approval CONSUMED) if the
         send may go ahead.
         """
-        request = self.get_status(approval_id)
+        request = self.get_status(approval_id, tenant_id)
         if request.action != action or request.resource_id != resource_id:
             raise ApprovalMismatchError(
                 f"approval {approval_id} was granted for {request.action}/{request.resource_id}, "
@@ -81,10 +85,10 @@ class ApprovalService:
             raise ApprovalExpiredError(approval_id)
         if request.status != ApprovalStatus.APPROVED:
             raise ApprovalNotGrantedError(f"approval {approval_id} is {request.status}")
-        self._store.update_status(approval_id, ApprovalStatus.CONSUMED)
+        self._store.update_status(approval_id, tenant_id, ApprovalStatus.CONSUMED)
 
-    def list_pending(self) -> list[ApprovalRequest]:
-        return self._store.list_pending()
+    def list_pending(self, tenant_id: str) -> list[ApprovalRequest]:
+        return self._store.list_pending(tenant_id)
 
     def _resolve_expiry(self, request: ApprovalRequest) -> ApprovalRequest:
         if (
@@ -92,5 +96,5 @@ class ApprovalService:
             and request.expires_at is not None
             and datetime.now(UTC) > request.expires_at
         ):
-            return self._store.update_status(request.id, ApprovalStatus.EXPIRED)
+            return self._store.update_status(request.id, request.tenant_id, ApprovalStatus.EXPIRED)
         return request

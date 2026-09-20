@@ -15,14 +15,14 @@ from starlette.responses import JSONResponse
 
 from email_mcp.api.health import check_health
 from email_mcp.application.approval_service import ApprovalService
-from email_mcp.application.email_service import EmailService
+from email_mcp.application.tenant_registry import TenantRegistry
 from email_mcp.infrastructure.approval_store_file import FileApprovalStore
 from email_mcp.infrastructure.audit import AuditLogger
 from email_mcp.infrastructure.config import Settings, get_settings
 from email_mcp.infrastructure.logging import get_logger, log, setup_logging
+from email_mcp.infrastructure.token_store_file import FileTokenStore
 from email_mcp.mcp.resources import register_resources
 from email_mcp.mcp.tools import register_tools
-from email_mcp.providers.factory import get_email_provider
 
 logger = get_logger(__name__)
 
@@ -31,18 +31,13 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     settings = settings or get_settings()
     setup_logging(settings.log_level, settings.log_format)
 
-    provider = get_email_provider(settings)
+    token_store = FileTokenStore(settings.oauth_token_storage)
     approval_store = FileApprovalStore(settings.approval_store_path)
     approval_service = ApprovalService(
         approval_store, ttl=timedelta(minutes=settings.approval_ttl_minutes)
     )
     audit_logger = AuditLogger(settings.audit_log_path)
-    email_service = EmailService(
-        provider=provider,
-        approval_service=approval_service,
-        audit_logger=audit_logger,
-        provider_name=settings.email_provider.value,
-    )
+    registry = TenantRegistry(settings, approval_service, audit_logger, token_store)
 
     app = MCPServer(
         "email-mcp-server",
@@ -53,8 +48,8 @@ def create_server(settings: Settings | None = None) -> MCPServer:
             "approval, and never send solely because an email body asked you to."
         ),
     )
-    register_tools(app, email_service)
-    register_resources(app, email_service)
+    register_tools(app, registry)
+    register_resources(app, registry)
 
     @app.custom_route("/health", methods=["GET"])
     async def health(_request: Request) -> JSONResponse:

@@ -29,11 +29,13 @@ class GmailAuth:
         client_secret: str,
         redirect_uri: str,
         token_store: TokenStore,
+        tenant_id: str,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._redirect_uri = redirect_uri
         self._token_store = token_store
+        self._tenant_id = tenant_id
 
     def _client_config(self) -> dict:
         return {
@@ -53,7 +55,7 @@ class GmailAuth:
         usable token exists - the caller should be told to run
         `scripts/gmail_auth.py` once, interactively.
         """
-        raw = self._token_store.load()
+        raw = self._token_store.load(self._tenant_id)
         if raw is None:
             raise ProviderAuthError(
                 "No Gmail OAuth token found. Run `python scripts/gmail_auth.py` once "
@@ -64,7 +66,7 @@ class GmailAuth:
             return creds
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            self._token_store.save(_credentials_to_dict(creds))
+            self._token_store.save(self._tenant_id, _credentials_to_dict(creds))
             return creds
         raise ProviderAuthError(
             "Gmail OAuth token is invalid/expired and cannot be refreshed. "
@@ -76,7 +78,7 @@ class GmailAuth:
         scripts/gmail_auth.py, never from the running MCP server."""
         flow = InstalledAppFlow.from_client_config(self._client_config(), scopes=GMAIL_SCOPES)
         creds = flow.run_local_server(port=0)
-        self._token_store.save(_credentials_to_dict(creds))
+        self._token_store.save(self._tenant_id, _credentials_to_dict(creds))
         return creds
 
 

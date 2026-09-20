@@ -25,6 +25,7 @@ from datetime import timedelta
 
 from email_mcp.application.approval_service import ApprovalService
 from email_mcp.domain.errors import ApprovalError
+from email_mcp.domain.identity import DEFAULT_TENANT_ID
 from email_mcp.infrastructure.approval_store_file import FileApprovalStore
 from email_mcp.infrastructure.config import get_settings
 
@@ -35,8 +36,8 @@ def build_service() -> ApprovalService:
     return ApprovalService(store, ttl=timedelta(minutes=settings.approval_ttl_minutes))
 
 
-def cmd_list(service: ApprovalService, _args: argparse.Namespace) -> None:
-    pending = service.list_pending()
+def cmd_list(service: ApprovalService, args: argparse.Namespace) -> None:
+    pending = service.list_pending(tenant_id=args.tenant)
     if not pending:
         print("No pending approval requests.")
         return
@@ -45,7 +46,7 @@ def cmd_list(service: ApprovalService, _args: argparse.Namespace) -> None:
 
 
 def cmd_show(service: ApprovalService, args: argparse.Namespace) -> None:
-    req = service.get_status(args.approval_id)
+    req = service.get_status(args.approval_id, tenant_id=args.tenant)
     print(f"id:        {req.id}")
     print(f"action:    {req.action}")
     print(f"resource:  {req.resource_id}")
@@ -58,13 +59,18 @@ def cmd_show(service: ApprovalService, args: argparse.Namespace) -> None:
 
 
 def cmd_decide(service: ApprovalService, args: argparse.Namespace, *, approve: bool) -> None:
-    req = service.decide(args.approval_id, approve=approve)
+    req = service.decide(args.approval_id, tenant_id=args.tenant, approve=approve)
     verb = "APPROVED" if approve else "REJECTED"
     print(f"{req.id} is now {verb} ({req.status}).")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--tenant",
+        default=DEFAULT_TENANT_ID,
+        help=f"Tenant whose approvals to operate on (default: {DEFAULT_TENANT_ID!r}).",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list", help="List pending approval requests.")

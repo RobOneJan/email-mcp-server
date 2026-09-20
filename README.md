@@ -43,13 +43,13 @@ in `providers/factory.py` - nothing else changes.
 
 ```text
 src/email_mcp/
-  domain/            models.py, enums.py, errors.py           # provider-neutral
+  domain/            models.py, enums.py, errors.py, identity.py  # provider-neutral
   ports/             email_provider.py, approval_store.py, token_store.py
   providers/
-    factory.py       # EMAIL_PROVIDER -> concrete EmailProvider
+    factory.py       # EMAIL_PROVIDER + tenant_id -> concrete EmailProvider
     fake/provider.py # in-memory, zero credentials needed
     gmail/           client.py, auth.py, mapper.py, provider.py
-  application/       email_service.py, approval_service.py
+  application/       email_service.py, approval_service.py, tenant_registry.py
   mcp/               server.py, tools.py, schemas.py, resources.py (stub)
   infrastructure/    config.py, logging.py, security.py, audit.py,
                      approval_store_file.py, token_store_file.py
@@ -95,11 +95,16 @@ seeded fake mailbox - no external account required.
    ```
 3. Run the one-time consent flow:
    ```bash
-   python scripts/gmail_auth.py
+   python scripts/gmail_auth.py --tenant default
    ```
    This opens a browser, asks you to sign in and grant access, and stores the
-   resulting token at `OAUTH_TOKEN_STORAGE` (default `./var/gmail_token.json`,
-   owner-read/write only, gitignored).
+   resulting token at `OAUTH_TOKEN_STORAGE/<tenant>.json` (default
+   `./var/tokens/default.json`, owner-read/write only, gitignored). Every
+   store/service in this codebase is threaded by `tenant_id` (see
+   `domain/identity.py`), one token per connected mailbox - `--tenant` is how
+   you'll onboard additional mailboxes later; today the MCP server itself
+   still only ever resolves the single `DEFAULT_TENANT_ID` (see "Known
+   limitations" below), so `default` is the only tenant that actually gets used.
 4. Start the server: `email-mcp-server`.
 
 Only a single OAuth scope is requested: `gmail.modify` - Google's
@@ -109,8 +114,9 @@ read, short of permanently deleting anything.
 ### Swapping token storage
 
 `providers/gmail/auth.py` depends only on the `TokenStore` protocol
-(`ports/token_store.py`). The included `FileTokenStore` is fine for local
-dev; a production deployment should provide a Secret Manager/Vault-backed
+(`ports/token_store.py`), keyed by `tenant_id`. The included `FileTokenStore`
+(one JSON file per tenant under a directory) is fine for local dev; a
+production deployment should provide a Secret Manager/Vault-backed
 implementation of the same protocol and wire it in `providers/factory.py` -
 no other code changes.
 
@@ -119,7 +125,7 @@ no other code changes.
 ```
 1. create_draft(...)                    → EmailDraft{id}                (LLM, via MCP)
 2. request_send_approval(draft_id)      → ApprovalRequest{id, PENDING}  (LLM, via MCP)
-3. [OUT OF BAND]  a human runs:
+3. [OUT OF BAND]  a human runs (add `--tenant <id>` once more than one tenant exists):
        python scripts/approve_request.py list
        python scripts/approve_request.py show <approval_id>
        python scripts/approve_request.py approve <approval_id>   # or reject
@@ -213,9 +219,14 @@ without parsing descriptions.
 
 - `FileApprovalStore`/`FileTokenStore` use POSIX file locking (`fcntl`) -
   Linux/macOS only.
-- Single-user/stdio only; there's no multi-tenant actor identity in the audit
-  log (`DEFAULT_ACTOR` is a constant) - add real identity if/when this runs
-  behind a multi-user transport.
+- Every store and service (`TokenStore`, `ApprovalStore`, `EmailService`,
+  `TenantRegistry`, the audit log) is threaded by `tenant_id`, but the MCP
+  server itself still only ever resolves one: `mcp/tools.py:_resolve_tenant_id()`
+  always returns `domain.identity.DEFAULT_TENANT_ID` - there is still no real
+  per-caller identity, because there is no authentication at the MCP layer
+  yet (stdio/Cloud-Run-IAM trusts whoever can reach the process). Wiring in
+  the authenticated caller (once the server has its own OAuth layer) is a
+  one-function change; everything downstream is already tenant-aware.
 - MCP Resources and Prompts are intentionally not implemented yet (see
   docstrings in `mcp/resources.py`) - the read tools already cover the read
   path, and workflow prompts belong to the calling agent for now.

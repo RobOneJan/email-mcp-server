@@ -3,6 +3,10 @@
     "email": {
       "command": ".venv/bin/email-mcp-server",
       "args": []
+    },
+    "email-cloud-run": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
     }
   }
 }

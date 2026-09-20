@@ -47,7 +47,7 @@ steps:
       # this serves more than one Cloud Run instance or one customer.
       - --add-volume=name=var,type=cloud-storage,bucket=$PROJECT_ID-email-mcp-server-var
       - --add-volume-mount=volume=var,mount-path=/app/var
-      - --set-env-vars=EMAIL_PROVIDER=gmail,OAUTH_TOKEN_STORAGE=/app/var/gmail_token.json,APPROVAL_STORE_PATH=/app/var/approvals.json,AUDIT_LOG_PATH=/app/var/audit.log
+      - --set-env-vars=EMAIL_PROVIDER=gmail,OAUTH_TOKEN_STORAGE=/app/var/tokens,APPROVAL_STORE_PATH=/app/var/approvals.json,AUDIT_LOG_PATH=/app/var/audit.log
       - --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest
 
 images:
