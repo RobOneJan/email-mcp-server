@@ -12,18 +12,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import stat
 from pathlib import Path
 from typing import Any
 
-_VALID_TENANT_ID = re.compile(r"^[A-Za-z0-9_.@-]+$")
-
-
-def _validate_tenant_id(tenant_id: str) -> str:
-    if not tenant_id or not _VALID_TENANT_ID.match(tenant_id):
-        raise ValueError(f"invalid tenant_id: {tenant_id!r}")
-    return tenant_id
+from email_mcp.domain.identity import validate_tenant_id
 
 
 class FileTokenStore:
@@ -32,7 +25,7 @@ class FileTokenStore:
         self._base_dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, tenant_id: str) -> Path:
-        return self._base_dir / f"{_validate_tenant_id(tenant_id)}.json"
+        return self._base_dir / f"{validate_tenant_id(tenant_id)}.json"
 
     def load(self, tenant_id: str) -> dict[str, Any] | None:
         path = self._path(tenant_id)

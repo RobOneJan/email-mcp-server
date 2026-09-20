@@ -120,6 +120,33 @@ production deployment should provide a Secret Manager/Vault-backed
 implementation of the same protocol and wire it in `providers/factory.py` -
 no other code changes.
 
+## Access for additional callers (hosted deployment)
+
+The Cloud Run deployment stays `--no-allow-unauthenticated` (see
+`cloudbuild.yaml`) - access is granted per caller via Cloud Run IAM, not a
+shareable link:
+
+- **A human with their own MCP client:** grant their Google account
+  `roles/run.invoker` on the service, they run
+  `gcloud run services proxy email-mcp-server --region=<region> --port=<port>`
+  (same as any developer would for their own access), and point their MCP
+  client at `http://localhost:<port>/mcp`.
+- **Another agent/service you control** (e.g. an ERP agent calling this
+  server autonomously, event-driven): give it its own GCP service account,
+  grant that service account `roles/run.invoker`, and have it fetch a
+  Google-signed identity token for itself (any Google client library can do
+  this, e.g. Python's `google.oauth2.id_token.fetch_id_token`) as the
+  `Authorization: Bearer` header - no interactive consent needed, and no
+  server-side code required, since Cloud Run's own IAM layer already
+  verifies exactly this.
+
+No custom token-verification code exists in this repo for either case -
+Cloud Run IAM already does it. A general-purpose "anyone can self-serve
+without you granting IAM access first" flow (for external users without a
+GCP identity in this project) is a materially bigger feature - an MCP-level
+OAuth authorization server - and is intentionally not built until there is
+an actual need for it (see "Known limitations").
+
 ## Approval Flow (human-in-the-loop)
 
 ```
