@@ -15,7 +15,7 @@ from email_mcp.application.email_service import EmailService
 from email_mcp.infrastructure.audit import AuditLogger
 from email_mcp.infrastructure.config import Settings
 from email_mcp.ports.token_store import TokenStore
-from email_mcp.providers.factory import get_email_provider
+from email_mcp.providers.factory import get_email_provider, get_provider_name
 
 
 class TenantRegistry:
@@ -40,7 +40,7 @@ class TenantRegistry:
                 provider=provider,
                 approval_service=self._approvals,
                 audit_logger=self._audit,
-                provider_name=self._settings.email_provider.value,
+                provider_name=get_provider_name(self._settings, tenant_id, self._token_store),
                 tenant_id=tenant_id,
             )
             self._services[tenant_id] = service

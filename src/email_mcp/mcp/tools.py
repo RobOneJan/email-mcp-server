@@ -14,13 +14,13 @@ it read inside an email body - can approve or send anything by itself.
 
 from __future__ import annotations
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
 
 from email_mcp.application.tenant_registry import TenantRegistry
 from email_mcp.domain.errors import ApprovalError, EmailProviderError
-from email_mcp.domain.identity import DEFAULT_TENANT_ID
+from email_mcp.domain.identity import DEFAULT_TENANT_ID, validate_tenant_id
 from email_mcp.mcp.schemas import (
     ApprovalRequestDTO,
     AttachmentContentDTO,
@@ -46,17 +46,43 @@ SENSITIVE_ACTION = ToolAnnotations(
 SAFE_ACTION = ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True)
 
 
-def _resolve_tenant_id() -> str:
+_TENANT_HEADER = "X-Tenant-Id"
+
+
+def _resolve_tenant_id(ctx: Context) -> str:
     """The one hook point for per-caller identity.
 
     Every tool handler below calls this to decide which tenant's mailbox it
-    is acting on. Today it always returns `DEFAULT_TENANT_ID` (this MVP is
-    still single-tenant end to end - see README), but every store/service
-    downstream already takes a real `tenant_id`, so wiring in the
-    authenticated caller from the MCP request context (once the server has
-    its own OAuth layer) only requires changing this one function.
+    is acting on. Reads the `X-Tenant-Id` request header when the transport
+    carries one (streamable-http only - `ctx.headers` is None on stdio, which
+    always resolves to `DEFAULT_TENANT_ID`), falling back to
+    `DEFAULT_TENANT_ID` when absent so every existing single-tenant caller
+    (Claude Desktop via a local proxy, the CLI scripts, tests) keeps working
+    unchanged.
+
+    This is deliberately NOT an identity/authorization check - a header is
+    client-supplied input a caller could set to anything (see
+    `Context.headers`'s own docstring). It is safe here only because this
+    server's transport is already gated end-to-end by Cloud Run IAM (see
+    README, "Access for additional callers"): the only callers who can reach
+    this endpoint at all are ones already trusted as a whole (e.g. agent-hub's
+    service account), and *that* trusted caller is the one deciding, per its
+    own already-authenticated Telegram chat, which tenant a request is for -
+    this header is how it tells us. A real MCP-level OAuth authorization
+    layer (see README roadmap) would replace this with a verified claim
+    instead of a plain header; until that exists, do not expose this server
+    to any caller you would not already trust with every configured tenant.
     """
-    return DEFAULT_TENANT_ID
+    try:
+        headers = ctx.headers or {}
+    except ValueError:
+        # No request context at all (e.g. a tool invoked directly in a test,
+        # bypassing a real MCP request) - same as "no header sent".
+        headers = {}
+    raw = headers.get(_TENANT_HEADER) or headers.get(_TENANT_HEADER.lower())
+    if not raw:
+        return DEFAULT_TENANT_ID
+    return validate_tenant_id(raw)
 
 
 def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
@@ -69,9 +95,9 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         annotations=READ_ONLY,
     )
     async def search_emails(
-        query: QueryParam = None, limit: LimitParam = 50
+        ctx: Context, query: QueryParam = None, limit: LimitParam = 50
     ) -> list[EmailSummaryDTO]:
-        service = registry.get(_resolve_tenant_id())
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             results = await service.search_emails(query=query, limit=limit)
         return [EmailSummaryDTO.from_domain(r) for r in results]
@@ -81,8 +107,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         description="Fetch one email by id, including its full body.",
         annotations=READ_ONLY,
     )
-    async def get_email(email_id: IdParam) -> EmailDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def get_email(ctx: Context, email_id: IdParam) -> EmailDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             email = await service.get_email(email_id)
         return EmailDTO.from_domain(email)
@@ -92,8 +118,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         description="Fetch a full email thread (all messages) by id.",
         annotations=READ_ONLY,
     )
-    async def get_thread(thread_id: IdParam) -> EmailThreadDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def get_thread(ctx: Context, thread_id: IdParam) -> EmailThreadDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             thread = await service.get_thread(thread_id)
         return EmailThreadDTO.from_domain(thread)
@@ -107,13 +133,14 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         annotations=PREPARE,
     )
     async def create_draft(
+        ctx: Context,
         to: list[EmailAddressDTO],
         subject: SubjectParam,
         body_text: BodyParam,
         cc: list[EmailAddressDTO] | None = None,
         reply_to_email_id: IdParam | None = None,
     ) -> EmailDraftDTO:
-        service = registry.get(_resolve_tenant_id())
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             draft = await service.create_draft(
                 to=[a.to_domain() for a in to],
@@ -133,8 +160,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         ),
         annotations=PREPARE,
     )
-    async def request_send_approval(draft_id: IdParam) -> ApprovalRequestDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def request_send_approval(ctx: Context, draft_id: IdParam) -> ApprovalRequestDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             request = await service.request_send_approval(draft_id)
         return ApprovalRequestDTO.from_domain(
@@ -151,8 +178,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         description="Check the current status of a previously requested send approval.",
         annotations=READ_ONLY,
     )
-    async def get_approval_status(approval_id: IdParam) -> ApprovalRequestDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def get_approval_status(ctx: Context, approval_id: IdParam) -> ApprovalRequestDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             request = await service.get_approval_status(approval_id)
         return ApprovalRequestDTO.from_domain(request, message=f"status: {request.status}")
@@ -167,8 +194,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         ),
         annotations=SENSITIVE_ACTION,
     )
-    async def send_email(draft_id: IdParam, approval_id: IdParam) -> SendEmailResultDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def send_email(ctx: Context, draft_id: IdParam, approval_id: IdParam) -> SendEmailResultDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             sent_id = await service.send_email(draft_id=draft_id, approval_id=approval_id)
         return SendEmailResultDTO(sent_email_id=sent_id)
@@ -178,8 +205,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         description="Mark one email as read.",
         annotations=SAFE_ACTION,
     )
-    async def mark_as_read(email_id: IdParam) -> SuccessDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def mark_as_read(ctx: Context, email_id: IdParam) -> SuccessDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             await service.mark_as_read(email_id)
         return SuccessDTO()
@@ -194,8 +221,8 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         ),
         annotations=READ_ONLY,
     )
-    async def get_attachment(email_id: IdParam, attachment_id: IdParam) -> AttachmentContentDTO:
-        service = registry.get(_resolve_tenant_id())
+    async def get_attachment(ctx: Context, email_id: IdParam, attachment_id: IdParam) -> AttachmentContentDTO:
+        service = registry.get(_resolve_tenant_id(ctx))
         with _wrap_provider_errors():
             content = await service.get_attachment(email_id, attachment_id)
         return AttachmentContentDTO.from_domain(content)

@@ -105,9 +105,10 @@ seeded fake mailbox - no external account required.
    `./var/tokens/default.json`, owner-read/write only, gitignored). Every
    store/service in this codebase is threaded by `tenant_id` (see
    `domain/identity.py`), one token per connected mailbox - `--tenant` is how
-   you'll onboard additional mailboxes later; today the MCP server itself
-   still only ever resolves the single `DEFAULT_TENANT_ID` (see "Known
-   limitations" below), so `default` is the only tenant that actually gets used.
+   you onboard additional mailboxes (see "Known limitations" below, "Onboarding
+   a second tenant") - a caller identifies which tenant it means via the
+   `X-Tenant-Id` header; without one, every caller still resolves to
+   `DEFAULT_TENANT_ID`, so this default single-mailbox setup needs no changes.
 4. Start the server: `email-mcp-server`.
 
 Only a single OAuth scope is requested: `gmail.modify` - Google's
@@ -315,13 +316,29 @@ without parsing descriptions.
 - `FileApprovalStore`/`FileTokenStore` use POSIX file locking (`fcntl`) -
   Linux/macOS only.
 - Every store and service (`TokenStore`, `ApprovalStore`, `EmailService`,
-  `TenantRegistry`, the audit log) is threaded by `tenant_id`, but the MCP
-  server itself still only ever resolves one: `mcp/tools.py:_resolve_tenant_id()`
-  always returns `domain.identity.DEFAULT_TENANT_ID` - there is still no real
-  per-caller identity, because there is no authentication at the MCP layer
-  yet (stdio/Cloud-Run-IAM trusts whoever can reach the process). Wiring in
-  the authenticated caller (once the server has its own OAuth layer) is a
-  one-function change; everything downstream is already tenant-aware.
+  `TenantRegistry`, the audit log) is threaded by `tenant_id`, and
+  `mcp/tools.py:_resolve_tenant_id()` now resolves it from an `X-Tenant-Id`
+  request header when the transport carries one (streamable-http only),
+  falling back to `domain.identity.DEFAULT_TENANT_ID` otherwise (stdio, or
+  any caller that doesn't send the header). This is still not real
+  per-caller *authentication* - a header is client-supplied input, not a
+  verified claim (see the docstring on `_resolve_tenant_id`) - it only works
+  because the transport as a whole is already gated by Cloud Run IAM (or
+  trusted stdio), and the caller allowed through that gate (e.g. agent-hub)
+  is the one deciding, per its own already-authenticated Telegram chat,
+  which tenant a request is for. Do not expose this server, as configured
+  today, to any caller you would not already trust with every onboarded
+  tenant's mailbox. A real MCP-level OAuth authorization layer (see the
+  "Access for additional callers" roadmap) would replace this with a
+  verified claim instead.
+- **Onboarding a second (third, ...) tenant** beyond `DEFAULT_TENANT_ID`:
+  run `python scripts/gmail_auth.py --tenant <id>` (Gmail) or
+  `python scripts/imap_auth.py --tenant <id>` (any other IMAP/SMTP mailbox,
+  interactive - prompts for host/port/username/password, no OAuth exists for
+  plain IMAP). `providers/factory.py` infers which provider type a
+  non-default tenant uses from the shape of what got stored - see its
+  module docstring - so nothing else needs to be told the provider type
+  explicitly.
 - MCP Resources and Prompts are intentionally not implemented yet (see
   docstrings in `mcp/resources.py`) - the read tools already cover the read
   path, and workflow prompts belong to the calling agent for now.
