@@ -44,4 +44,30 @@ def get_email_provider(settings: Settings, tenant_id: str, token_store: TokenSto
         client = GmailClient(auth=auth)
         return GmailEmailProvider(client=client)
 
+    if settings.email_provider == EmailProviderName.IMAP:
+        if not settings.imap_host or not settings.smtp_host or not settings.imap_username or not settings.imap_password:
+            raise ProviderAuthError(
+                "EMAIL_PROVIDER=imap requires IMAP_HOST, SMTP_HOST, IMAP_USERNAME and "
+                "IMAP_PASSWORD (see .env.example)."
+            )
+        from email_mcp.providers.imap.client import ImapSmtpClient
+        from email_mcp.providers.imap.provider import ImapEmailProvider
+
+        imap_client = ImapSmtpClient(
+            imap_host=settings.imap_host,
+            imap_port=settings.imap_port,
+            smtp_host=settings.smtp_host,
+            smtp_port=settings.smtp_port,
+            username=settings.imap_username,
+            password=settings.imap_password,
+            smtp_use_ssl=settings.smtp_use_ssl,
+        )
+        return ImapEmailProvider(
+            client=imap_client,
+            from_address=settings.imap_from_address or settings.imap_username,
+            inbox_folder=settings.imap_inbox_folder,
+            drafts_folder=settings.imap_drafts_folder,
+            sent_folder=settings.imap_sent_folder,
+        )
+
     raise ValueError(f"Unknown EMAIL_PROVIDER: {settings.email_provider!r}")

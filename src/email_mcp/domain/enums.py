@@ -22,4 +22,5 @@ class EmailProviderName(StrEnum):
 
     FAKE = "fake"
     GMAIL = "gmail"
+    IMAP = "imap"
     # MICROSOFT_GRAPH = "microsoft_graph"  # future

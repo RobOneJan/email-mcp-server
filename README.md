@@ -49,6 +49,7 @@ src/email_mcp/
     factory.py       # EMAIL_PROVIDER + tenant_id -> concrete EmailProvider
     fake/provider.py # in-memory, zero credentials needed
     gmail/           client.py, auth.py, mapper.py, provider.py
+    imap/            client.py, mapper.py, provider.py  # any plain IMAP+SMTP host
   application/       email_service.py, approval_service.py, tenant_registry.py
   mcp/               server.py, tools.py, schemas.py, resources.py (stub)
   infrastructure/    config.py, logging.py, security.py, audit.py,
@@ -56,9 +57,11 @@ src/email_mcp/
   api/               health.py
 
 tests/unit/          domain, approval, email_service, gmail mapper/auth,
-                     fake provider, MCP tool validation - all offline
-tests/contract/      same suite run against Fake (always) and Gmail (opt-in)
-tests/integration/   live Gmail API calls, opt-in only
+                     imap client/mapper/provider, fake provider, MCP tool
+                     validation - all offline
+tests/contract/      same suite run against Fake (always), Gmail (opt-in),
+                     IMAP (opt-in)
+tests/integration/   live Gmail/IMAP calls, opt-in only
 
 scripts/
   gmail_auth.py       # one-time interactive OAuth consent
@@ -119,6 +122,55 @@ read, short of permanently deleting anything.
 production deployment should provide a Secret Manager/Vault-backed
 implementation of the same protocol and wire it in `providers/factory.py` -
 no other code changes.
+
+## IMAP/SMTP setup (any other mail host)
+
+For a mailbox that isn't Gmail or Microsoft Graph - the common case for a
+personal domain or small-business mail host - `EMAIL_PROVIDER=imap` talks to
+it over plain IMAP (read) + SMTP (send), no OAuth required:
+
+```
+EMAIL_PROVIDER=imap
+IMAP_HOST=imap.example.com
+IMAP_USERNAME=me@example.com
+IMAP_PASSWORD=...            # an app-specific password if your host requires one (e.g. 2FA enabled)
+SMTP_HOST=smtp.example.com
+```
+
+See `.env.example` for the full list (ports, `SMTP_USE_SSL`, folder name
+overrides, `IMAP_FROM_ADDRESS`). No live IMAP server was available to test
+this provider against while building it - it ships with full unit test
+coverage (`tests/unit/test_imap_*.py`) against an in-memory fake of the
+IMAP/SMTP client, but has not yet been run against a real mailbox. Once you
+have real credentials, either:
+
+- run `RUN_LIVE_IMAP_CONTRACT_TESTS=1 pytest tests/contract tests/integration -m integration`
+  (also needs `IMAP_HOST`/`SMTP_HOST`/`IMAP_USERNAME`/`IMAP_PASSWORD` set -
+  this creates a real draft and sends a real message, same as the Gmail
+  contract tests do against a real mailbox), or
+- just start the server with `EMAIL_PROVIDER=imap` and use it directly.
+
+Notable differences from the Gmail provider, inherent to plain IMAP rather
+than implementation shortcuts:
+
+- **Folder names aren't standardized** across hosts (`INBOX.Drafts` vs
+  `[Gmail]/Drafts` vs `Drafts`, `Sent` vs `Sent Items`, ...) - check your
+  host's actual folder names and set `IMAP_INBOX_FOLDER`/`IMAP_DRAFTS_FOLDER`/
+  `IMAP_SENT_FOLDER` if they differ from the defaults.
+- **`search_emails` only searches the inbox folder**, not "all mail" the way
+  Gmail's API does by default - IMAP is inherently folder-scoped.
+- **Threading is header-based, not server-side.** Standard IMAP has no
+  `threadId` concept; a message's `thread_id` here is the root `Message-ID`
+  of its `References` chain (its own `Message-ID` if it starts a new one),
+  and `get_thread` searches Inbox + Sent for anything matching. This works
+  for any thread this provider itself created, and for any thread from a
+  well-behaved mail client (nearly all of them set `References`/
+  `In-Reply-To` correctly) - it can miss a thread from a client that doesn't.
+- **A sent message is copied into the Sent folder explicitly** after SMTP
+  delivery succeeds - most non-Gmail SMTP servers don't do this
+  automatically the way Gmail's does.
+- **Ids are opaque strings of the form `"<role>:<uid>"`** (e.g. `"inbox:1042"`),
+  never a raw IMAP UID or folder name - see `providers/imap/mapper.py`.
 
 ## Access for additional callers (hosted deployment)
 
@@ -246,10 +298,12 @@ without parsing descriptions.
 
 ## Extensibility
 
-- **Another email provider** (Microsoft Graph, IMAP, SMTP): add
-  `providers/<name>/{client,auth,mapper,provider}.py` implementing
-  `ports/email_provider.py`, add a branch to `providers/factory.py`, add
-  `EMAIL_PROVIDER=<name>`. `application/` and `mcp/` do not change.
+- **Another email provider** (Microsoft Graph, or a provider-specific IMAP
+  variant): add `providers/<name>/{client,auth,mapper,provider}.py`
+  implementing `ports/email_provider.py`, add a branch to
+  `providers/factory.py`, add `EMAIL_PROVIDER=<name>`. `application/` and
+  `mcp/` do not change - `providers/imap/` (plain IMAP+SMTP, no OAuth) is a
+  worked example of exactly this, added after the Gmail provider.
 - **Beyond email:** the same Ports & Adapters shape (a neutral domain, a
   provider-neutral port, provider adapters, an application service, thin MCP
   tools) is designed to generalize to other capabilities (Calendar, Files,
