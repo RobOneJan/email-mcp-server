@@ -165,7 +165,21 @@ an actual need for it (see "Known limitations").
 LLM driving the server has no way to invoke it. This is what makes "a human
 approved this" actually true, rather than something the model could talk
 itself into - including via a prompt-injection attempt embedded in an
-email body:
+email body.
+
+### Approving from a chat channel (e.g. Telegram)
+
+`POST /internal/approvals/{approval_id}/approve` and `.../reject` (optional
+`?tenant=<id>` query param) are the same mechanism, reachable over HTTP
+instead of the CLI - see `mcp/server.py`. Still **not an MCP tool**: they
+are not among the tools `mcp/tools.py` registers, so nothing the LLM does
+inside the tool-use loop can reach them. They exist for a channel adapter
+(see [agent-human-interface](https://github.com/RobOneJan/agent-human-interface))
+whose callback handler is triggered only by a genuine human tapping an
+approve/reject button in the chat - a completely separate code path from
+the one the model drives, exactly like the CLI. Protected by whatever
+platform-level auth guards the whole service (Cloud Run IAM in this
+deployment) - not marked unauthenticated like `/health`.
 
 ```text
 Email Content = UNTRUSTED

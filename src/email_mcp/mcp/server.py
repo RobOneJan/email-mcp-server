@@ -16,6 +16,8 @@ from starlette.responses import JSONResponse
 from email_mcp.api.health import check_health
 from email_mcp.application.approval_service import ApprovalService
 from email_mcp.application.tenant_registry import TenantRegistry
+from email_mcp.domain.errors import ApprovalError, ApprovalNotFoundError
+from email_mcp.domain.identity import DEFAULT_TENANT_ID
 from email_mcp.infrastructure.approval_store_file import FileApprovalStore
 from email_mcp.infrastructure.audit import AuditLogger
 from email_mcp.infrastructure.config import Settings, get_settings
@@ -57,8 +59,38 @@ def create_server(settings: Settings | None = None) -> MCPServer:
         # Cloud Run's startup/liveness probes hit, never a real MCP client.
         return JSONResponse(check_health(settings))
 
+    # Deliberately NOT an MCP tool - same reasoning as scripts/approve_request.py
+    # (see README's Approval Flow section): the LLM driving the MCP tool-use
+    # loop only ever sees the tools registered in mcp/tools.py, and these two
+    # routes are not among them, so no sequence of tool calls can reach this
+    # code path. It is reachable only by a genuine out-of-band caller - the
+    # human-run CLI, or (see agent-hub's README) a channel adapter's callback
+    # handler fired by an actual human tapping a button in that channel, never
+    # by anything the model itself decided to do. Not marked unauthenticated:
+    # unlike /health, this endpoint is still gated by whatever platform-level
+    # auth protects the whole service (e.g. Cloud Run IAM) - see README.
+    @app.custom_route("/internal/approvals/{approval_id}/approve", methods=["POST"])
+    async def approve_via_channel(request: Request) -> JSONResponse:
+        return _decide_from_channel(request, approval_service, approve=True)
+
+    @app.custom_route("/internal/approvals/{approval_id}/reject", methods=["POST"])
+    async def reject_via_channel(request: Request) -> JSONResponse:
+        return _decide_from_channel(request, approval_service, approve=False)
+
     log(logger, logging.INFO, "email-mcp-server ready", provider=settings.email_provider.value)
     return app
+
+
+def _decide_from_channel(request: Request, approval_service: ApprovalService, *, approve: bool) -> JSONResponse:
+    approval_id = request.path_params["approval_id"]
+    tenant_id = request.query_params.get("tenant", DEFAULT_TENANT_ID)
+    try:
+        result = approval_service.decide(approval_id, tenant_id, approve=approve)
+    except ApprovalNotFoundError:
+        return JSONResponse({"error": "no such pending approval"}, status_code=404)
+    except ApprovalError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    return JSONResponse({"id": result.id, "status": result.status.value, "resource_id": result.resource_id})
 
 
 def main() -> None:
