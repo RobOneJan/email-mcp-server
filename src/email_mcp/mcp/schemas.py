@@ -32,6 +32,7 @@ from email_mcp.domain.models import (
 from email_mcp.infrastructure.security import (
     MAX_BODY_LENGTH,
     MAX_ID_LENGTH,
+    MAX_READ_BODY_LENGTH,
     MAX_SEARCH_LIMIT,
     MAX_SUBJECT_LENGTH,
 )
@@ -106,6 +107,17 @@ class EmailSummaryDTO(WireModel):
         )
 
 
+def _truncate_body(body_text: str) -> str:
+    """Bound what an LLM reads back from a mailbox it doesn't control (see
+    MAX_READ_BODY_LENGTH's own docstring) - a length problem only, never an
+    HTML/markup one: `body_html` is dropped entirely below, not truncated,
+    since an LLM answering questions from an email practically never needs
+    raw markup, and HTML runs 3-10x the token cost of the equivalent text."""
+    if len(body_text) <= MAX_READ_BODY_LENGTH:
+        return body_text
+    return body_text[:MAX_READ_BODY_LENGTH] + f"\n\n[... truncated, {len(body_text)} characters total]"
+
+
 class EmailDTO(WireModel):
     id: str
     thread_id: str | None
@@ -114,7 +126,6 @@ class EmailDTO(WireModel):
     cc: list[EmailAddressDTO]
     subject: str
     body_text: str
-    body_html: str | None
     attachments: list[AttachmentDTO]
     received_at: datetime
     is_read: bool
@@ -128,8 +139,7 @@ class EmailDTO(WireModel):
             recipients=[EmailAddressDTO.from_domain(a) for a in email.recipients],
             cc=[EmailAddressDTO.from_domain(a) for a in email.cc],
             subject=email.subject,
-            body_text=email.body_text,
-            body_html=email.body_html,
+            body_text=_truncate_body(email.body_text),
             attachments=[AttachmentDTO(**a.model_dump()) for a in email.attachments],
             received_at=email.received_at,
             is_read=email.is_read,

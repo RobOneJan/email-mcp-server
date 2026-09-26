@@ -13,7 +13,16 @@ from typing import Any
 
 MAX_SEARCH_LIMIT = 200
 MAX_SUBJECT_LENGTH = 998  # RFC 5322 practical header line limit
-MAX_BODY_LENGTH = 200_000
+MAX_BODY_LENGTH = 200_000  # bounds a body the LLM WRITES (create_draft) - generous, it's typed content
+# Bounds a body the LLM READS BACK (get_email/get_thread) - a completely
+# separate concern from MAX_BODY_LENGTH above. An inbound mailbox is not
+# under this system's control: a long newsletter or a deep quoted-reply
+# chain can be enormous, and unlike a draft the LLM is composing, nothing
+# about reading one email needs its full length to answer a question about
+# it. ~5,000 tokens' worth of characters - generous for a real message,
+# small next to a context window. get_thread applies this per message, not
+# per thread, since a long thread already multiplies this via message count.
+MAX_READ_BODY_LENGTH = 20_000
 MAX_ID_LENGTH = 512
 # Attachment content is returned to an LLM caller as base64 (~1.37x size) in a
 # single tool result; 512 KiB comfortably covers a typical invoice/receipt PDF
