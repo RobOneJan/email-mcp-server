@@ -6,6 +6,7 @@ contains no business logic itself, only composition root wiring.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -16,7 +17,7 @@ from starlette.responses import JSONResponse
 from email_mcp.api.health import check_health
 from email_mcp.application.approval_service import ApprovalService
 from email_mcp.application.tenant_registry import TenantRegistry
-from email_mcp.domain.errors import ApprovalError, ApprovalNotFoundError
+from email_mcp.domain.errors import ApprovalError, ApprovalNotFoundError, ProviderAuthError
 from email_mcp.domain.identity import DEFAULT_TENANT_ID
 from email_mcp.infrastructure.approval_store_file import FileApprovalStore
 from email_mcp.infrastructure.audit import AuditLogger
@@ -25,6 +26,7 @@ from email_mcp.infrastructure.logging import get_logger, log, setup_logging
 from email_mcp.infrastructure.token_store_file import FileTokenStore
 from email_mcp.mcp.resources import register_resources
 from email_mcp.mcp.tools import register_tools
+from email_mcp.ports.token_store import TokenStore
 
 logger = get_logger(__name__)
 
@@ -77,6 +79,16 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     async def reject_via_channel(request: Request) -> JSONResponse:
         return _decide_from_channel(request, approval_service, approve=False)
 
+    # Not an MCP tool either, same reasoning as the approval routes above -
+    # unreachable from the LLM's own tool-use loop. Called exactly once per
+    # mailbox (or again after the refresh token expires) by a Teams channel
+    # adapter (agent-hub's teams_bot.py) right after it silently obtains this
+    # app's own `access_as_user` SSO token for the signed-in user - see
+    # providers/graph/auth.py's module docstring for the full flow.
+    @app.custom_route("/internal/graph/bootstrap", methods=["POST"])
+    async def graph_bootstrap(request: Request) -> JSONResponse:
+        return await _bootstrap_graph_tenant(request, settings, token_store)
+
     log(logger, logging.INFO, "email-mcp-server ready", provider=settings.email_provider.value)
     return app
 
@@ -91,6 +103,33 @@ def _decide_from_channel(request: Request, approval_service: ApprovalService, *,
     except ApprovalError as exc:
         return JSONResponse({"error": str(exc)}, status_code=409)
     return JSONResponse({"id": result.id, "status": result.status.value, "resource_id": result.resource_id})
+
+
+async def _bootstrap_graph_tenant(request: Request, settings: Settings, token_store: TokenStore) -> JSONResponse:
+    body = await request.json()
+    tenant_id = body.get("tenant_id")
+    user_assertion = body.get("user_assertion")
+    if not tenant_id or not user_assertion:
+        return JSONResponse({"error": "tenant_id and user_assertion are required"}, status_code=400)
+    if not settings.graph_client_id or not settings.graph_client_secret or not settings.graph_tenant_id:
+        return JSONResponse(
+            {"error": "server has no GRAPH_CLIENT_ID/GRAPH_CLIENT_SECRET/GRAPH_TENANT_ID configured"},
+            status_code=500,
+        )
+    from email_mcp.providers.graph.auth import GraphAuth
+
+    auth = GraphAuth(
+        client_id=settings.graph_client_id,
+        client_secret=settings.graph_client_secret,
+        tenant_id=settings.graph_tenant_id,
+        token_store=token_store,
+        mailbox_tenant_id=tenant_id,
+    )
+    try:
+        await asyncio.to_thread(auth.complete_obo_bootstrap, user_assertion)
+    except ProviderAuthError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=401)
+    return JSONResponse({"status": "ok", "tenant_id": tenant_id})
 
 
 def main() -> None:

@@ -62,6 +62,8 @@ def get_provider_name(settings: Settings, tenant_id: str, token_store: TokenStor
 def _record_provider_name(record: dict[str, Any]) -> str:
     if "imap_host" in record:
         return "imap"
+    if "msal_cache" in record:
+        return "graph"
     if "refresh_token" in record or "token_uri" in record:
         return "gmail"
     return "unknown"
@@ -101,6 +103,15 @@ def _provider_from_settings(settings: Settings, tenant_id: str, token_store: Tok
             sent_folder=settings.imap_sent_folder,
         )
 
+    if settings.email_provider == EmailProviderName.GRAPH:
+        if not settings.graph_client_id or not settings.graph_client_secret or not settings.graph_tenant_id:
+            raise ProviderAuthError(
+                "EMAIL_PROVIDER=graph requires GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET and "
+                "GRAPH_TENANT_ID (see .env.example). Bootstrap a tenant via "
+                "POST /internal/graph/bootstrap (Teams SSO) first."
+            )
+        return _build_graph_provider(settings, tenant_id, token_store)
+
     raise ValueError(f"Unknown EMAIL_PROVIDER: {settings.email_provider!r}")
 
 
@@ -135,6 +146,15 @@ def _provider_from_tenant_record(settings: Settings, tenant_id: str, token_store
             )
         return _build_gmail_provider(settings, tenant_id, token_store)
 
+    if name == "graph":
+        if not settings.graph_client_id or not settings.graph_client_secret or not settings.graph_tenant_id:
+            raise ProviderAuthError(
+                f"Tenant_id={tenant_id!r} has a Microsoft Graph token, but this server has no "
+                "GRAPH_CLIENT_ID/GRAPH_CLIENT_SECRET/GRAPH_TENANT_ID configured (see .env.example) - "
+                "one registered Azure AD app is shared by every Graph tenant."
+            )
+        return _build_graph_provider(settings, tenant_id, token_store)
+
     raise ProviderAuthError(
         f"Stored credentials for tenant_id={tenant_id!r} are in an unrecognized format."
     )
@@ -153,6 +173,21 @@ def _build_gmail_provider(settings: Settings, tenant_id: str, token_store: Token
         tenant_id=tenant_id,
     )
     return GmailEmailProvider(client=GmailClient(auth=auth))
+
+
+def _build_graph_provider(settings: Settings, tenant_id: str, token_store: TokenStore) -> EmailProvider:
+    from email_mcp.providers.graph.auth import GraphAuth
+    from email_mcp.providers.graph.client import GraphClient
+    from email_mcp.providers.graph.provider import GraphEmailProvider
+
+    auth = GraphAuth(
+        client_id=settings.graph_client_id,  # type: ignore[arg-type]  # checked by both callers above
+        client_secret=settings.graph_client_secret,  # type: ignore[arg-type]
+        tenant_id=settings.graph_tenant_id,  # type: ignore[arg-type]
+        token_store=token_store,
+        mailbox_tenant_id=tenant_id,
+    )
+    return GraphEmailProvider(client=GraphClient(auth=auth))
 
 
 def _build_imap_provider(

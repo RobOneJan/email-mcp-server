@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     # login = one send-as address.
     imap_from_address: str | None = None
 
+    # Microsoft Graph (required only when EMAIL_PROVIDER=graph, or when any
+    # tenant's stored TokenStore record is Graph-backed - see
+    # providers/factory.py). One Azure AD (Entra ID) app registration -
+    # client credentials - is shared by every Graph-backed tenant; what
+    # differs per tenant is the token cache built via the On-Behalf-Of flow
+    # at POST /internal/graph/bootstrap (see providers/graph/auth.py), not a
+    # per-tenant client id/secret.
+    graph_client_id: str | None = None
+    graph_client_secret: str | None = None
+    graph_tenant_id: str | None = None
+
     # Approval store
     approval_store_path: str = "./var/approvals.json"
     approval_ttl_minutes: int = Field(default=30, gt=0)
