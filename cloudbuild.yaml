@@ -6,6 +6,13 @@ substitutions:
   _REGION: europe-west3
   _REPO: email-mcp-server
   _SERVICE: email-mcp-server
+  # Same Azure AD app registration as agent-human-interface's
+  # TEAMS_APP_ID/TEAMS_APP_TENANT_ID - this app doubles as both the Teams
+  # Bot's own identity there and the Graph on-behalf-of client here. Not
+  # secret; set as trigger-level substitutions - see providers/graph/auth.py
+  # and agent-human-interface's README for the Azure setup steps.
+  _GRAPH_CLIENT_ID: ""
+  _GRAPH_TENANT_ID: ""
 
 steps:
   - id: build
@@ -47,8 +54,8 @@ steps:
       # this serves more than one Cloud Run instance or one customer.
       - --add-volume=name=var,type=cloud-storage,bucket=$PROJECT_ID-email-mcp-server-var
       - --add-volume-mount=volume=var,mount-path=/app/var
-      - --set-env-vars=EMAIL_PROVIDER=gmail,OAUTH_TOKEN_STORAGE=/app/var/tokens,APPROVAL_STORE_PATH=/app/var/approvals.json,AUDIT_LOG_PATH=/app/var/audit.log
-      - --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest
+      - --set-env-vars=^@^EMAIL_PROVIDER=gmail,OAUTH_TOKEN_STORAGE=/app/var/tokens,APPROVAL_STORE_PATH=/app/var/approvals.json,AUDIT_LOG_PATH=/app/var/audit.log@GRAPH_CLIENT_ID=${_GRAPH_CLIENT_ID}@GRAPH_TENANT_ID=${_GRAPH_TENANT_ID}
+      - --set-secrets=GOOGLE_CLIENT_ID=google-client-id:latest,GOOGLE_CLIENT_SECRET=google-client-secret:latest,GRAPH_CLIENT_SECRET=email-mcp-server-graph-client-secret:latest
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPO}/${_SERVICE}:$BUILD_ID
