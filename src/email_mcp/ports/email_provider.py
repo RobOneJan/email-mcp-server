@@ -60,6 +60,29 @@ class EmailProvider(Protocol):
         elsewhere."""
         ...
 
+    async def update_draft(
+        self,
+        draft_id: str,
+        subject: str | None = None,
+        body_text: str | None = None,
+    ) -> EmailDraft:
+        """Update an existing draft's content in place, keeping the same
+        `draft_id` (unlike delete+recreate, which some backends could only
+        offer - see e.g. `ImapEmailProvider`, which raises NotImplementedError
+        instead, since it cannot preserve the id). `None` for a field leaves
+        it unchanged.
+
+        Only called from the human-triggered approve-with-edits path (see
+        `EmailService.update_draft` / `mcp/server.py`'s approval route) - a
+        human correcting a typo on the approval card right before tapping
+        approve, never reachable from the LLM's own tool-use loop. This does
+        NOT bypass `send_draft`'s own "content is exactly what was reviewed"
+        guarantee (see that method's docstring): the edit happens, atomically
+        with the human's own approve action, *before* the approval is
+        recorded - so whatever the human approved is still exactly what gets
+        sent."""
+        ...
+
     async def send_draft(self, draft_id: str) -> str:
         """Send a previously created draft, unchanged. Returns the sent email's id.
 

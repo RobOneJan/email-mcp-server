@@ -94,6 +94,22 @@ class GraphEmailProvider:
         message = await self._call(self._client.get_message, draft_id)
         return graph_message_to_draft(message)
 
+    async def update_draft(
+        self, draft_id: str, subject: str | None = None, body_text: str | None = None
+    ) -> EmailDraft:
+        # Graph's PATCH /messages/{id} supports partial updates natively -
+        # unlike Gmail, no need to resend unrelated fields (see
+        # `update_message`'s other caller, create_draft's reply-draft path,
+        # for the same PATCH-over-existing-content pattern).
+        content: dict = {}
+        if subject is not None:
+            content["subject"] = subject
+        if body_text is not None:
+            content["body"] = {"contentType": "text", "content": body_text}
+        if content:
+            await self._call(self._client.update_message, draft_id, content)
+        return await self.get_draft(draft_id)
+
     async def send_draft(self, draft_id: str) -> str:
         await self._call(self._client.send_draft, draft_id)
         # Graph's send-by-id endpoint returns no body and keeps the sent

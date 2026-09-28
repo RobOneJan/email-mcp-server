@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from email_mcp.domain.models import Email, EmailAddress
+from email_mcp.domain.enums import ApprovalStatus
+from email_mcp.domain.models import ApprovalRequest, Email, EmailAddress
 from email_mcp.infrastructure.security import MAX_READ_BODY_LENGTH
-from email_mcp.mcp.schemas import EmailDTO
+from email_mcp.mcp.schemas import ApprovalRequestDTO, EmailDTO
 
 
 def _email(body_text: str, body_html: str | None = None) -> Email:
@@ -53,3 +54,23 @@ def test_email_dto_does_not_truncate_exactly_at_the_limit() -> None:
     exact_body = "x" * MAX_READ_BODY_LENGTH
     dto = EmailDTO.from_domain(_email(exact_body))
     assert dto.body_text == exact_body
+
+
+def test_approval_request_dto_carries_the_full_payload() -> None:
+    """The whole point of this field (see schemas.py's own comment): a
+    channel adapter's approval card can only show full review detail
+    (to/cc/subject/body_preview) if it actually reaches the DTO - previously
+    ApprovalRequest.payload was collected but never left this server."""
+    request = ApprovalRequest(
+        id="req-1",
+        tenant_id="default",
+        action="send_email",
+        resource_id="draft-1",
+        status=ApprovalStatus.PENDING,
+        payload={"to": "robert@example.com", "subject": "Hi", "body_preview": "Hello there"},
+        created_at=datetime.now(UTC),
+    )
+
+    dto = ApprovalRequestDTO.from_domain(request, message="waiting for approval")
+
+    assert dto.payload == {"to": "robert@example.com", "subject": "Hi", "body_preview": "Hello there"}

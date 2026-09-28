@@ -83,6 +83,18 @@ class EmailService:
     async def get_approval_status(self, approval_id: str) -> ApprovalRequest:
         return self._approvals.get_status(approval_id, tenant_id=self._tenant_id)
 
+    async def update_draft(
+        self, draft_id: str, subject: str | None = None, body_text: str | None = None
+    ) -> EmailDraft:
+        """Deliberately NOT an MCP tool (see `mcp/tools.py`'s own note on
+        why `send_email` only takes an id) - called from exactly one place,
+        the approve-with-edits HTTP route in `mcp/server.py`, itself only
+        reachable by a human tapping approve on a channel's approval card,
+        never by the LLM's own tool-use loop."""
+        draft = await self._provider.update_draft(draft_id, subject=subject, body_text=body_text)
+        self._record(action="update_draft", resource_id=draft_id, result="ok")
+        return draft
+
     async def send_email(self, draft_id: str, approval_id: str) -> str:
         try:
             self._approvals.consume_if_approved(

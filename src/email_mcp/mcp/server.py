@@ -31,7 +31,12 @@ from email_mcp.ports.token_store import TokenStore
 logger = get_logger(__name__)
 
 
-def create_server(settings: Settings | None = None) -> MCPServer:
+def create_server(settings: Settings | None = None, *, registry: TenantRegistry | None = None) -> MCPServer:
+    """`registry` is normally built internally from `settings` - the override
+    exists only so tests can construct their own `TenantRegistry` (e.g. to
+    seed a real draft via `EmailService.create_draft` before exercising the
+    approve-with-edits HTTP route below against that exact same registry/
+    provider instance) without duplicating this function's wiring."""
     settings = settings or get_settings()
     setup_logging(settings.log_level, settings.log_format)
 
@@ -41,7 +46,7 @@ def create_server(settings: Settings | None = None) -> MCPServer:
         approval_store, ttl=timedelta(minutes=settings.approval_ttl_minutes)
     )
     audit_logger = AuditLogger(settings.audit_log_path)
-    registry = TenantRegistry(settings, approval_service, audit_logger, token_store)
+    registry = registry or TenantRegistry(settings, approval_service, audit_logger, token_store)
 
     app = MCPServer(
         "email-mcp-server",
@@ -73,11 +78,11 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     # auth protects the whole service (e.g. Cloud Run IAM) - see README.
     @app.custom_route("/internal/approvals/{approval_id}/approve", methods=["POST"])
     async def approve_via_channel(request: Request) -> JSONResponse:
-        return _decide_from_channel(request, approval_service, approve=True)
+        return await _decide_from_channel(request, approval_service, registry, approve=True)
 
     @app.custom_route("/internal/approvals/{approval_id}/reject", methods=["POST"])
     async def reject_via_channel(request: Request) -> JSONResponse:
-        return _decide_from_channel(request, approval_service, approve=False)
+        return await _decide_from_channel(request, approval_service, registry, approve=False)
 
     # Not an MCP tool either, same reasoning as the approval routes above -
     # unreachable from the LLM's own tool-use loop. Called exactly once per
@@ -93,9 +98,39 @@ def create_server(settings: Settings | None = None) -> MCPServer:
     return app
 
 
-def _decide_from_channel(request: Request, approval_service: ApprovalService, *, approve: bool) -> JSONResponse:
+_EDITABLE_FIELDS = {"subject": "subject", "body_preview": "body_text"}
+
+
+async def _decide_from_channel(
+    request: Request, approval_service: ApprovalService, registry: TenantRegistry, *, approve: bool
+) -> JSONResponse:
     approval_id = request.path_params["approval_id"]
     tenant_id = request.query_params.get("tenant", DEFAULT_TENANT_ID)
+
+    if approve:
+        # Edited field values from the channel's approval card (see
+        # agent-hub's teams_bot.py `_handle_approval_callback`) - applied to
+        # the draft BEFORE recording the approval, atomically with it, so
+        # `send_email`'s "content is exactly what was reviewed" guarantee
+        # still holds (see EmailProvider.update_draft's docstring). Only
+        # `subject`/`body_preview` are supported for now - a card submit may
+        # also echo back `to`/`cc` unchanged (the card shows them too), which
+        # this silently ignores rather than trying to change recipients.
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 - empty/absent body is the common case (plain approve, no edits)
+            body = {}
+        edits = {dest: body[src] for src, dest in _EDITABLE_FIELDS.items() if body.get(src)}
+        if edits:
+            try:
+                pending = approval_service.get_status(approval_id, tenant_id)
+            except ApprovalNotFoundError:
+                return JSONResponse({"error": "no such pending approval"}, status_code=404)
+            try:
+                await registry.get(tenant_id).update_draft(pending.resource_id, **edits)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the human tapping approve, not swallowed
+                return JSONResponse({"error": f"couldn't apply edits: {exc}"}, status_code=400)
+
     try:
         result = approval_service.decide(approval_id, tenant_id, approve=approve)
     except ApprovalNotFoundError:

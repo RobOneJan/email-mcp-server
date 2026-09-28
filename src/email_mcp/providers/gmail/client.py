@@ -71,6 +71,18 @@ class GmailClient:
     def get_draft(self, draft_id: str) -> dict:
         return self._get_service().users().drafts().get(userId=_USER_ID, id=draft_id).execute()
 
+    def update_draft(self, draft_id: str, raw_message: str, thread_id: str | None = None) -> dict:
+        message_body: dict = {"raw": raw_message}
+        if thread_id:
+            message_body["threadId"] = thread_id
+        return (
+            self._get_service()
+            .users()
+            .drafts()
+            .update(userId=_USER_ID, id=draft_id, body={"message": message_body})
+            .execute()
+        )
+
     def send_draft(self, draft_id: str) -> dict:
         return (
             self._get_service()

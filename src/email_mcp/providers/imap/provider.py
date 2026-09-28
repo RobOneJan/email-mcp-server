@@ -144,6 +144,20 @@ class ImapEmailProvider:
         raw = await self._fetch_draft_raw(draft_id)
         return imap_message_to_draft(draft_id, raw)
 
+    async def update_draft(
+        self, draft_id: str, subject: str | None = None, body_text: str | None = None
+    ) -> EmailDraft:
+        # Plain IMAP has no in-place message modification - only APPEND
+        # (create) and delete. Re-appending would mint a new UID, changing
+        # draft_id out from under an approval already tied to the old one
+        # (see EmailProvider.update_draft's own docstring on why the id must
+        # stay stable) - not safe to paper over silently, so this is an
+        # honest gap rather than a subtly-broken "success".
+        raise NotImplementedError(
+            "IMAP drafts cannot be updated in place (no stable id across "
+            "delete+recreate) - edit-before-approve isn't supported for this provider yet."
+        )
+
     async def send_draft(self, draft_id: str) -> str:
         role, uid = _decode_or_not_found(draft_id)
         if role != _ROLE_DRAFTS:

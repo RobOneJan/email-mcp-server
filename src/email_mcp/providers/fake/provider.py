@@ -153,6 +153,21 @@ class FakeEmailProvider:
             raise EmailNotFoundError(draft_id)
         return draft
 
+    async def update_draft(
+        self, draft_id: str, subject: str | None = None, body_text: str | None = None
+    ) -> EmailDraft:
+        draft = self._drafts.get(draft_id)
+        if draft is None:
+            raise EmailNotFoundError(draft_id)
+        update = {}
+        if subject is not None:
+            update["subject"] = subject
+        if body_text is not None:
+            update["body_text"] = body_text
+        draft = draft.model_copy(update=update)
+        self._drafts[draft_id] = draft
+        return draft
+
     async def send_draft(self, draft_id: str) -> str:
         draft = self._drafts.get(draft_id)
         if draft is None:

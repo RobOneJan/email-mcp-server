@@ -189,6 +189,12 @@ class ApprovalRequestDTO(WireModel):
     created_at: datetime
     expires_at: datetime | None
     message: str
+    # Full human-review detail (to/cc/subject/body_preview) - was already
+    # collected in ApprovalRequest.payload but never left this server before,
+    # so a channel adapter's approval card could only ever show a generic
+    # one-line message. See orchestrator.py/teams_bot.py on the agent-hub
+    # side for what renders this.
+    payload: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
     def from_domain(cls, request: ApprovalRequest, message: str) -> ApprovalRequestDTO:
@@ -199,6 +205,7 @@ class ApprovalRequestDTO(WireModel):
             created_at=request.created_at,
             expires_at=request.expires_at,
             message=message,
+            payload=request.payload,
         )
 
 

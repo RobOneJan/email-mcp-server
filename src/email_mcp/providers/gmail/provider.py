@@ -101,6 +101,30 @@ class GmailEmailProvider:
         draft = await self._call(self._client.get_draft, draft_id)
         return gmail_draft_to_domain(draft["id"], draft)
 
+    async def update_draft(
+        self, draft_id: str, subject: str | None = None, body_text: str | None = None
+    ) -> EmailDraft:
+        # Gmail's drafts.update replaces the whole raw MIME message (no
+        # partial-field PATCH like Graph's) - rebuild it from the existing
+        # draft's own to/cc/threading, substituting only the edited field(s).
+        existing = await self.get_draft(draft_id)
+        in_reply_to: str | None = None
+        references: str | None = None
+        if existing.reply_to_email_id is not None:
+            original = await self._call(self._client.get_message, existing.reply_to_email_id)
+            in_reply_to = gmail_message_header(original, "Message-ID")
+            references = gmail_message_header(original, "References") or in_reply_to
+        raw = build_raw_message(
+            to=existing.to,
+            subject=subject if subject is not None else existing.subject,
+            body_text=body_text if body_text is not None else existing.body_text,
+            cc=existing.cc,
+            in_reply_to_message_id=in_reply_to,
+            references=references,
+        )
+        draft = await self._call(self._client.update_draft, draft_id, raw, existing.thread_id)
+        return gmail_draft_to_domain(draft["id"], draft)
+
     async def send_draft(self, draft_id: str) -> str:
         sent = await self._call(self._client.send_draft, draft_id)
         return sent["id"]

@@ -12,10 +12,14 @@ import pytest
 from starlette.testclient import TestClient
 
 from email_mcp.application.approval_service import ApprovalService
+from email_mcp.application.tenant_registry import TenantRegistry
 from email_mcp.domain.enums import EmailProviderName
 from email_mcp.domain.identity import DEFAULT_TENANT_ID
+from email_mcp.domain.models import EmailAddress
 from email_mcp.infrastructure.approval_store_file import FileApprovalStore
+from email_mcp.infrastructure.audit import AuditLogger
 from email_mcp.infrastructure.config import Settings
+from email_mcp.infrastructure.token_store_file import FileTokenStore
 from email_mcp.mcp.server import create_server
 
 
@@ -81,3 +85,64 @@ def test_wrong_tenant_cannot_see_or_decide_the_approval(client: TestClient, sett
     resp = client.post(f"/internal/approvals/{approval_id}/approve", params={"tenant": "someone-elses-tenant"})
 
     assert resp.status_code == 404
+
+
+@pytest.fixture
+def registry(settings: Settings) -> TenantRegistry:
+    approval_service = ApprovalService(FileApprovalStore(settings.approval_store_path), ttl=timedelta(minutes=30))
+    audit = AuditLogger(settings.audit_log_path)
+    token_store = FileTokenStore(settings.oauth_token_storage)
+    return TenantRegistry(settings, approval_service, audit, token_store)
+
+
+@pytest.fixture
+def client_with_registry(settings: Settings, registry: TenantRegistry) -> TestClient:
+    # Same settings (same approval_store_path/audit_log_path - both file-
+    # backed, see FileApprovalStore) as `registry`, so a draft/approval
+    # seeded through `registry` here is visible to the HTTP routes below,
+    # which build their own ApprovalService from the same file.
+    app = create_server(settings, registry=registry)
+    with TestClient(app.streamable_http_app()) as c:
+        yield c
+
+
+async def test_approve_with_edits_updates_the_draft_before_it_can_be_sent(
+    client_with_registry: TestClient, registry: TenantRegistry
+) -> None:
+    service = registry.get(DEFAULT_TENANT_ID)
+    draft = await service.create_draft(
+        to=[EmailAddress(email="robert@example.com")], subject="Original subject", body_text="Original body"
+    )
+    request = await service.request_send_approval(draft.id)
+
+    resp = client_with_registry.post(
+        f"/internal/approvals/{request.id}/approve",
+        json={"subject": "Edited subject", "body_preview": "Edited body", "to": "ignored@example.com"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "approved"
+    updated = await service._provider.get_draft(draft.id)
+    assert updated.subject == "Edited subject"
+    assert updated.body_text == "Edited body"
+    # `to` is not an editable field yet (see mcp/server.py's _EDITABLE_FIELDS)
+    # - silently ignored rather than erroring, so a card that echoes it back
+    # unchanged still works.
+    assert updated.to[0].email == "robert@example.com"
+
+
+async def test_approve_without_edits_leaves_the_draft_unchanged(
+    client_with_registry: TestClient, registry: TenantRegistry
+) -> None:
+    service = registry.get(DEFAULT_TENANT_ID)
+    draft = await service.create_draft(
+        to=[EmailAddress(email="robert@example.com")], subject="Original subject", body_text="Original body"
+    )
+    request = await service.request_send_approval(draft.id)
+
+    resp = client_with_registry.post(f"/internal/approvals/{request.id}/approve")
+
+    assert resp.status_code == 200
+    updated = await service._provider.get_draft(draft.id)
+    assert updated.subject == "Original subject"
+    assert updated.body_text == "Original body"
