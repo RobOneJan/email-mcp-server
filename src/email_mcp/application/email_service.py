@@ -23,6 +23,36 @@ from email_mcp.ports.email_provider import EmailProvider
 
 SEND_EMAIL_ACTION = "send_email"
 
+# Types a sender's mail client puts on a file when it doesn't know better. A PDF
+# labelled like this is still a PDF, and callers decide by type whether they can
+# read it at all (agent-hub only shows PDFs and images to the model).
+_GENERIC_CONTENT_TYPES = {"", "application/octet-stream", "binary/octet-stream", "application/x-download", "application/force-download"}
+
+_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_content_type(data: bytes) -> str | None:
+    head = data[:1024]
+    if b"%PDF-" in head:  # some generators put a few bytes before the header
+        return "application/pdf"
+    if head.startswith(b"RIFF") and head[8:12] == b"WEBP":
+        return "image/webp"
+    return next((content_type for magic, content_type in _SIGNATURES if head.startswith(magic)), None)
+
+
+def _with_real_content_type(content: AttachmentContent) -> AttachmentContent:
+    """Replace a generic declared type with the one the bytes actually have.
+    A specific declared type is left alone - only "I don't know" is corrected."""
+    if content.content_type.strip().lower() not in _GENERIC_CONTENT_TYPES:
+        return content
+    sniffed = _sniff_content_type(content.data)
+    return content.model_copy(update={"content_type": sniffed}) if sniffed else content
+
 
 class EmailService:
     """Bound to exactly one tenant: `provider` must already be that tenant's
@@ -122,7 +152,8 @@ class EmailService:
         self._record(action="mark_as_read", resource_id=email_id, result="ok")
 
     async def get_attachment(self, email_id: str, attachment_id: str) -> AttachmentContent:
-        return await self._provider.get_attachment(email_id, attachment_id)
+        content = await self._provider.get_attachment(email_id, attachment_id)
+        return _with_real_content_type(content)
 
     def _record(
         self, action: str, resource_id: str, result: str, approval_id: str | None = None

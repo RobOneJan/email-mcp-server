@@ -85,3 +85,46 @@ async def test_mark_as_read(email_service: EmailService) -> None:
     await email_service.mark_as_read(unread.id)
     refreshed = await email_service.get_email(unread.id)
     assert refreshed.is_read is True
+
+
+
+class _ProviderReturning:
+    """Stands in for a real provider's get_attachment only."""
+
+    def __init__(self, content_type: str, data: bytes) -> None:
+        from email_mcp.domain.models import AttachmentContent
+
+        self._content = AttachmentContent(
+            filename="RG20260335.PDF", content_type=content_type, size_bytes=len(data), data=data
+        )
+
+    async def get_attachment(self, email_id: str, attachment_id: str):
+        return self._content
+
+
+def _service_with(tmp_path, provider) -> EmailService:
+    approvals = ApprovalService(FileApprovalStore(tmp_path / "approvals.json"), ttl=timedelta(minutes=30))
+    return EmailService(provider, approvals, AuditLogger(tmp_path / "audit.log"), provider_name="fake", tenant_id=TENANT)
+
+
+@pytest.mark.parametrize("declared", ["application/octet-stream", "", "Binary/Octet-Stream"])
+async def test_pdf_with_a_generic_type_is_reported_as_pdf(tmp_path, declared: str) -> None:
+    service = _service_with(tmp_path, _ProviderReturning(declared, b"%PDF-1.7 invoice"))
+    content = await service.get_attachment("e", "a")
+    assert content.content_type == "application/pdf"
+    assert content.data == b"%PDF-1.7 invoice"
+
+
+async def test_image_with_a_generic_type_is_reported_as_image(tmp_path) -> None:
+    service = _service_with(tmp_path, _ProviderReturning("application/octet-stream", b"\x89PNG\r\n\x1a\nrest"))
+    assert (await service.get_attachment("e", "a")).content_type == "image/png"
+
+
+async def test_specific_declared_type_is_left_alone(tmp_path) -> None:
+    service = _service_with(tmp_path, _ProviderReturning("application/vnd.ms-excel", b"%PDF-1.7 odd"))
+    assert (await service.get_attachment("e", "a")).content_type == "application/vnd.ms-excel"
+
+
+async def test_unknown_bytes_keep_the_generic_type(tmp_path) -> None:
+    service = _service_with(tmp_path, _ProviderReturning("application/octet-stream", b"PK\x03\x04 a zip"))
+    assert (await service.get_attachment("e", "a")).content_type == "application/octet-stream"

@@ -24,10 +24,13 @@ MAX_BODY_LENGTH = 200_000  # bounds a body the LLM WRITES (create_draft) - gener
 # per thread, since a long thread already multiplies this via message count.
 MAX_READ_BODY_LENGTH = 20_000
 MAX_ID_LENGTH = 512
-# Attachment content is returned to an LLM caller as base64 (~1.37x size) in a
-# single tool result; 512 KiB comfortably covers a typical invoice/receipt PDF
-# while blocking anything large enough to flood the caller's context.
-MAX_ATTACHMENT_SIZE_BYTES = 512_000
+# Attachment content is returned as base64 (~1.37x size) in a single tool
+# result, which the MCP SDK sends twice (structured and as text), so 8 MB keeps a
+# response well under Cloud Run's 32 MB limit. File size says little about what
+# a reader pays: Claude reads a PDF per page, so a 700 KB scanned invoice is a
+# couple of pages, not a flood. agent-hub keeps the content out of the model's
+# text context entirely (see its orchestrator._run_tool).
+MAX_ATTACHMENT_SIZE_BYTES = 8_000_000
 
 _SENSITIVE_KEYS = {
     "access_token",
