@@ -64,7 +64,7 @@ def parse_single_address(header_value: str | None) -> EmailAddress:
     addresses = parse_address_list(header_value)
     if addresses:
         return addresses[0]
-    return EmailAddress(email="unknown@unknown.invalid", name=None)
+    return EmailAddress(email="unknown@unknown.example", name=None)
 
 
 def _header(msg: Message, name: str) -> str | None:

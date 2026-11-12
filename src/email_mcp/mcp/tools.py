@@ -14,6 +14,8 @@ it read inside an email body - can approve or send anything by itself.
 
 from __future__ import annotations
 
+import logging
+
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp_types import ToolAnnotations
@@ -228,6 +230,9 @@ def register_tools(app: MCPServer, registry: TenantRegistry) -> None:
         return AttachmentContentDTO.from_domain(content)
 
 
+_logger = logging.getLogger(__name__)
+
+
 class _wrap_provider_errors:
     """Turn known domain/approval errors into safe, LLM-readable `ToolError`s.
 
@@ -243,4 +248,8 @@ class _wrap_provider_errors:
     def __exit__(self, exc_type, exc, tb) -> bool:
         if isinstance(exc, (EmailProviderError, ApprovalError)):
             raise ToolError(str(exc)) from exc
+        if exc is not None:
+            # The SDK reduces this to a generic message and its own log line
+            # carries no traceback; without this the cause is lost.
+            _logger.error("unexpected tool failure", exc_info=(exc_type, exc, tb))
         return False

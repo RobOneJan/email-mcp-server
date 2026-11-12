@@ -41,6 +41,7 @@ from email_mcp.providers.graph.mapper import (
     graph_attachment_meta,
     graph_message_to_draft,
     graph_message_to_email,
+    graph_message_to_metadata,
 )
 
 T = TypeVar("T")
@@ -52,7 +53,7 @@ class GraphEmailProvider:
 
     async def search_emails(self, query: str | None = None, limit: int = 50) -> list[EmailMetadata]:
         messages = await self._call(self._client.list_messages, query, limit)
-        return [graph_message_to_email(m).to_metadata() for m in messages]
+        return [graph_message_to_metadata(m) for m in messages]
 
     async def get_email(self, email_id: str) -> Email:
         message = await self._call(self._client.get_message, email_id)

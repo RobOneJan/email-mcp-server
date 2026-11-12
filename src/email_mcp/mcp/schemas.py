@@ -93,6 +93,7 @@ class EmailSummaryDTO(WireModel):
     snippet: str
     received_at: datetime
     is_read: bool
+    has_attachments: bool = False
 
     @classmethod
     def from_domain(cls, metadata: EmailMetadata) -> EmailSummaryDTO:
@@ -104,6 +105,7 @@ class EmailSummaryDTO(WireModel):
             snippet=metadata.snippet,
             received_at=metadata.received_at,
             is_read=metadata.is_read,
+            has_attachments=metadata.has_attachments,
         )
 
 

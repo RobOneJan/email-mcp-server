@@ -58,6 +58,7 @@ class EmailMetadata(DomainModel):
     snippet: str = ""
     received_at: datetime
     is_read: bool = False
+    has_attachments: bool = False
 
 
 class Email(DomainModel):
@@ -82,6 +83,7 @@ class Email(DomainModel):
             snippet=self.body_text[:200],
             received_at=self.received_at,
             is_read=self.is_read,
+            has_attachments=bool(self.attachments),
         )
 
 

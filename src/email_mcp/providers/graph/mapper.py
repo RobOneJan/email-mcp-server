@@ -9,14 +9,32 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from email_mcp.domain.models import Attachment, Email, EmailAddress, EmailDraft
+from pydantic import ValidationError
+
+from email_mcp.domain.models import Attachment, Email, EmailAddress, EmailDraft, EmailMetadata
+
+# ".example" is reserved for exactly this (RFC 2606) and passes EmailStr; the
+# ".invalid" used before is rejected by it, so any message without a usable
+# sender failed the whole listing.
+_UNKNOWN_ADDRESS = "unknown@unknown.example"
+
+# Only what a listing needs: no body, which made listing 50 messages slow
+# enough for Graph to give up with a 5xx.
+SUMMARY_FIELDS = "id,conversationId,subject,from,receivedDateTime,isRead,bodyPreview,hasAttachments"
 
 
 def _graph_address(recipient: dict | None) -> EmailAddress:
+    """A sender Graph can't give as a plain SMTP address (an internal Exchange
+    address, a system notification) keeps its name with a placeholder address,
+    instead of failing the whole listing on validation."""
     if not recipient:
-        return EmailAddress(email="unknown@unknown.invalid", name=None)
+        return EmailAddress(email=_UNKNOWN_ADDRESS, name=None)
     addr = recipient.get("emailAddress", {})
-    return EmailAddress(email=addr.get("address") or "unknown@unknown.invalid", name=addr.get("name") or None)
+    raw, name = addr.get("address") or "", addr.get("name") or None
+    try:
+        return EmailAddress(email=raw or _UNKNOWN_ADDRESS, name=name)
+    except ValidationError:
+        return EmailAddress(email=_UNKNOWN_ADDRESS, name=name or raw or None)
 
 
 def _graph_address_list(recipients: list[dict] | None) -> list[EmailAddress]:
@@ -66,6 +84,20 @@ def graph_message_to_email(message: dict, attachments: list[Attachment] | None =
         attachments=attachments or [],
         received_at=_parse_datetime(message.get("receivedDateTime")),
         is_read=bool(message.get("isRead", False)),
+    )
+
+
+def graph_message_to_metadata(message: dict) -> EmailMetadata:
+    """A listing entry from a message fetched with SUMMARY_FIELDS."""
+    return EmailMetadata(
+        id=message["id"],
+        thread_id=message.get("conversationId"),
+        sender=_graph_address(message.get("from")),
+        subject=message.get("subject") or "",
+        snippet=(message.get("bodyPreview") or "")[:200],
+        received_at=_parse_datetime(message.get("receivedDateTime")),
+        is_read=bool(message.get("isRead", False)),
+        has_attachments=bool(message.get("hasAttachments", False)),
     )
 
 

@@ -11,12 +11,26 @@ never blocked - the `requests` package has no async API of its own.
 
 from __future__ import annotations
 
+import time
+
 import requests
 
 from email_mcp.providers.graph.auth import GraphAuth
+from email_mcp.providers.graph.mapper import SUMMARY_FIELDS
 
 _BASE_URL = "https://graph.microsoft.com/v1.0/me"
 _TIMEOUT = 30
+# Two retries for reads that hit a Graph outage, throttling or a timeout.
+_RETRY_PAUSES = (1.0, 3.0)
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_MAX_PAUSE = 10.0
+
+
+def _retry_after(response: requests.Response) -> float | None:
+    try:
+        return float(response.headers.get("Retry-After", ""))
+    except ValueError:
+        return None
 
 
 class GraphClient:
@@ -29,9 +43,23 @@ class GraphClient:
         # inside get_access_token means this never re-does a full OBO exchange
         # here.
         headers = {"Authorization": f"Bearer {self._auth.get_access_token()}"}
-        response = requests.request(method, f"{_BASE_URL}{path}", headers=headers, timeout=_TIMEOUT, **kwargs)
-        response.raise_for_status()
-        return response
+        url = f"{_BASE_URL}{path}"
+        for attempt, pause in enumerate((*_RETRY_PAUSES, None)):
+            try:
+                response = requests.request(method, url, headers=headers, timeout=_TIMEOUT, **kwargs)
+            except (requests.ConnectionError, requests.Timeout):
+                if pause is None:
+                    raise
+                time.sleep(pause)
+                continue
+            # Graph has short outages and throttles; retrying a read is safe.
+            # Writes are not retried: a timed-out POST may have gone through.
+            if response.status_code in _RETRY_STATUSES and pause is not None and method == "GET":
+                time.sleep(min(_retry_after(response) or pause, _MAX_PAUSE))
+                continue
+            response.raise_for_status()
+            return response
+        raise AssertionError("unreachable")
 
     def list_messages(self, query: str | None, top: int) -> list[dict]:
         # $orderby is rejected by Graph when combined with $search, so the
@@ -39,6 +67,7 @@ class GraphClient:
         params: dict[str, object] = (
             {"$search": f'"{query}"', "$top": top} if query else {"$top": top, "$orderby": "receivedDateTime desc"}
         )
+        params["$select"] = SUMMARY_FIELDS
         response = self._request("GET", "/messages", params=params)
         return response.json().get("value", [])
 
